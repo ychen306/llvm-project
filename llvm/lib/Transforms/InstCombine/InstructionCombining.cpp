@@ -32,6 +32,7 @@
 //   ... etc.
 //
 //===----------------------------------------------------------------------===//
+#include "DAG.h"
 
 #include "InstCombineInternal.h"
 #include "llvm-c/Initialization.h"
@@ -97,6 +98,10 @@
 #include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/InstCombine/InstCombineWorklist.h"
 #include "llvm/Transforms/Utils/Local.h"
+#include "llvm/Support/Process.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/SHA1.h"
+#include "llvm/Support/ToolOutputFile.h"
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
@@ -3488,7 +3493,36 @@ void InstructionCombiningPass::getAnalysisUsage(AnalysisUsage &AU) const {
   AU.addPreserved<GlobalsAAWrapperPass>();
 }
 
+constexpr char hexmap[] = {'0', '1', '2', '3', '4', '5', '6', '7',
+                             '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
+
+template<typename DataT>
+std::string hexStr(const DataT &data, int len) {
+  std::string s(len * 2, ' ');
+  for (int i = 0; i < len; ++i) {
+    s[2 * i]     = hexmap[(data[i] & 0xF0) >> 4];
+    s[2 * i + 1] = hexmap[data[i] & 0x0F];
+  }
+  return s;
+}
+
 bool InstructionCombiningPass::runOnFunction(Function &F) {
+  auto ExprDAGDir = sys::Process::GetEnv("EXPR_DAG_DIR");
+  if (ExprDAGDir.hasValue()) {
+    auto *M = F.getParent();
+    std::string FuncId = M->getSourceFileName() + "-" + F.getName().str();
+    auto Hash = SHA1::hash(arrayRefFromStringRef(FuncId));
+    std::string OutFileName = ExprDAGDir.getValue() + "/" + hexStr(Hash, Hash.size());
+    std::error_code EC;
+    ToolOutputFile Out(OutFileName, EC, sys::fs::F_None);
+    DAGSet DAGs(F);
+    for (auto &DAG : DAGs) {
+      Out.os() << ">\n";
+      DAG.dump(Out.os());
+    }
+    Out.keep();
+  }
+
   if (skipFunction(F))
     return false;
 
